@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# install.sh – Clean ERPNext Docker setup on Ubuntu
+# setup.sh – Clean ERPNext Docker setup on Ubuntu
 # WARNING: This script removes any existing ERPNext data and volumes.
-# It installs Docker/Compose, clones the frappe_docker repo, builds the containers,
-# and then creates (or updates) the ERPNext site “crm.slimrate.com” with the proper
-# Redis URLs.
+# It installs prerequisites, clones the frappe_docker repo, builds the containers,
+# and then creates (or updates) your ERPNext site “crm.slimrate.com” with proper Redis URLs.
 #
 # Usage:
 #   wget https://raw.githubusercontent.com/TheMarkest/erpnextinstall/refs/heads/main/setup.sh
@@ -54,10 +53,10 @@ cd frappe_docker
 echo "==> Removing any conflicting compose.yaml file..."
 rm -f compose.yaml
 
-# ---------- 6. Create a fresh .env file ----------
+# ---------- 6. Create a fresh .env file and source it ----------
 echo "==> Creating .env file..."
 cat <<'EOF' > .env
-# Site and passwords
+# Site configuration
 SITE_NAME=crm.slimrate.com
 DB_PASSWORD=SuperSecureDBPassword
 ADMIN_PASSWORD=SuperSecureAdminPassword
@@ -75,6 +74,11 @@ SOCKETIO_PORT=9000
 DB_HOST=mariadb
 DB_PORT=3306
 EOF
+
+# Export variables from the .env file so they are available to the script:
+set -a
+. .env
+set +a
 
 # ---------- 7. Create a docker-compose.yml file ----------
 echo "==> Creating docker-compose.yml..."
@@ -165,13 +169,13 @@ sleep 60
 # ---------- 9. Create or update the ERPNext site ----------
 echo "==> Checking for site ${SITE_NAME}..."
 if docker-compose exec backend bench --site "${SITE_NAME}" version >/dev/null 2>&1; then
-    echo "Site exists. Updating Redis settings..."
-    docker-compose exec backend bash -c 'bench --site "${SITE_NAME}" set-config redis_cache "redis://redis-cache:6379"'
-    docker-compose exec backend bash -c 'bench --site "${SITE_NAME}" set-config redis_queue "redis://redis-queue:6379"'
-    docker-compose exec backend bash -c 'bench --site "${SITE_NAME}" set-config redis_socketio "redis://redis-queue:6379"'
+    echo "Site ${SITE_NAME} exists. Updating Redis settings..."
+    docker-compose exec backend bash -c "bench --site '${SITE_NAME}' set-config redis_cache '${REDIS_CACHE}'"
+    docker-compose exec backend bash -c "bench --site '${SITE_NAME}' set-config redis_queue '${REDIS_QUEUE}'"
+    docker-compose exec backend bash -c "bench --site '${SITE_NAME}' set-config redis_socketio '${REDIS_SOCKETIO}'"
 else
-    echo "Site does not exist. Creating new site ${SITE_NAME}..."
-    docker-compose exec backend bash -c 'export REDIS_CACHE="redis://redis-cache:6379"; export REDIS_QUEUE="redis://redis-queue:6379"; export REDIS_SOCKETIO="redis://redis-queue:6379"; bench new-site "${SITE_NAME}" --mariadb-root-password "${DB_PASSWORD}" --admin-password "${ADMIN_PASSWORD}"'
+    echo "Site ${SITE_NAME} does not exist. Creating new site..."
+    docker-compose exec backend bash -c "export REDIS_CACHE='${REDIS_CACHE}'; export REDIS_QUEUE='${REDIS_QUEUE}'; export REDIS_SOCKETIO='${REDIS_SOCKETIO}'; bench new-site '${SITE_NAME}' --mariadb-root-password '${DB_PASSWORD}' --admin-password '${ADMIN_PASSWORD}'"
 fi
 
 # ---------- 10. Restart containers to ensure configuration takes effect ----------
@@ -180,6 +184,6 @@ docker-compose restart
 
 echo "==> ERPNext setup complete!"
 docker-compose ps
-echo "You can now access your ERPNext site at: http://<YOUR_SERVER_IP> (or update your DNS to point crm.slimrate.com)."
-echo "For troubleshooting, check container logs (for example: docker logs -f frappe_docker_websocket_1)."
+echo "You can now access your ERPNext site at: http://<YOUR_SERVER_IP> (or update your DNS to point ${SITE_NAME})."
+echo "For troubleshooting, check container logs (e.g., docker logs -f frappe_docker_websocket_1)."
 exit 0
