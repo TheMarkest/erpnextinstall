@@ -1,206 +1,101 @@
-#!/usr/bin/env bash
-# setup.sh – Clean ERPNext Docker installation with extra debug output for Redis configuration.
-# WARNING: This script will remove any existing ERPNext volumes/data.
-# Use on a fresh instance or after backing up your data.
+#!/bin/bash
+# setup.sh - A fresh installer for ERPNext using frappe_docker
+# This script updates the system, installs Docker and Docker Compose if missing,
+# clones (or updates) the frappe_docker repository, creates a clean .env file
+# (ensuring no extra spaces in Redis URLs), launches the containers, and creates
+# a new ERPNext site.
 
 set -euo pipefail
 
-###############################
-# 1. Update system & install prerequisites
-###############################
+# --- Configuration Variables ---
+# If SITE_NAME is not already set, prompt the user:
+if [ -z "${SITE_NAME:-}" ]; then
+  read -p "Enter your site name (e.g., crm.example.com): " SITE_NAME
+fi
+
+# Set the MariaDB root and ERPNext admin passwords (change as needed):
+MARIADB_ROOT_PASSWORD="SuperSecureDBPassword"
+ADMIN_PASSWORD="SuperSecureAdminPassword"
+
+# --- Step 1: Update system and install prerequisites ---
 echo "==> Updating system and installing prerequisites..."
-sudo apt update -y && sudo apt upgrade -y
-sudo apt install -y curl git
+apt-get update && apt-get upgrade -y
 
-###############################
-# 2. Install Docker and Docker Compose
-###############################
-echo "==> Installing Docker..."
+# Install curl and git if missing
+apt-get install -y curl git
+
+# --- Step 2: Install Docker if not installed ---
 if ! command -v docker &>/dev/null; then
-    sudo apt install -y docker.io
-    sudo systemctl enable docker
-    sudo systemctl start docker
+  echo "==> Installing Docker..."
+  apt-get install -y docker.io
 else
-    echo "Docker is already installed."
+  echo "==> Docker is already installed."
 fi
 
-echo "==> Installing Docker Compose..."
+# --- Step 3: Install Docker Compose if not installed ---
 if ! command -v docker-compose &>/dev/null; then
-    sudo apt install -y docker-compose
+  echo "==> Installing Docker Compose..."
+  apt-get install -y docker-compose
 else
-    echo "Docker Compose is already installed."
+  echo "==> Docker Compose is already installed."
 fi
 
-###############################
-# 3. Add current user to docker group
-###############################
-if ! groups "$USER" | grep -qw docker; then
-    echo "==> Adding $USER to the docker group. Please log out and log in again for changes to take effect."
-    sudo usermod -aG docker "$USER"
-fi
-
-###############################
-# 4. Clone (or update) frappe_docker repository
-###############################
-echo "==> Cloning (or updating) the frappe_docker repository..."
-if [ ! -d "frappe_docker" ]; then
-    git clone https://github.com/frappe/frappe_docker.git
+# --- Step 4: Clone (or update) the frappe_docker repository ---
+REPO_DIR="frappe_docker"
+if [ ! -d "$REPO_DIR" ]; then
+  echo "==> Cloning frappe_docker repository..."
+  git clone https://github.com/TheMarkest/frappe_docker.git "$REPO_DIR"
 else
-    echo "frappe_docker directory exists. Updating..."
-    cd frappe_docker && git pull && cd ..
+  echo "==> Updating frappe_docker repository..."
+  cd "$REPO_DIR"
+  git pull
+  cd ..
 fi
-cd frappe_docker
 
-###############################
-# 5. Remove any conflicting compose.yaml file
-###############################
-echo "==> Removing any conflicting compose.yaml file..."
-rm -f compose.yaml
+# --- Step 5: Remove any conflicting compose.yaml file if it exists ---
+if [ -f "$REPO_DIR/compose.yaml" ]; then
+  echo "==> Removing conflicting compose.yaml file..."
+  rm -f "$REPO_DIR/compose.yaml"
+fi
 
-###############################
-# 6. Create a fresh .env file
-###############################
+# --- Step 6: Create a clean .env file ---
 echo "==> Creating .env file..."
-cat <<'EOF' > .env
-SITE_NAME=crm.slimrate.com
-DB_PASSWORD=SuperSecureDBPassword
-ADMIN_PASSWORD=SuperSecureAdminPassword
-
-ERPNEXT_VERSION=version-14
-FRAPPE_VERSION=version-14
-
+cat > "$REPO_DIR/.env" <<EOF
+# ERPNext Environment Configuration
+SITE_NAME=${SITE_NAME}
 REDIS_CACHE=redis://redis-cache:6379
 REDIS_QUEUE=redis://redis-queue:6379
 REDIS_SOCKETIO=redis://redis-queue:6379
-SOCKETIO_PORT=9000
-
-DB_HOST=mariadb
-DB_PORT=3306
 EOF
+echo "==> .env file created with:"
+cat "$REPO_DIR/.env"
 
-set -a; . .env; set +a
-
-###############################
-# 7. Create docker-compose.yml file
-###############################
+# --- Step 7: Create (or update) docker-compose.yml ---
+# (This script assumes the repo contains a template; if not, ensure the provided
+# docker-compose.yml is correct.)
 echo "==> Creating docker-compose.yml..."
-cat <<'EOF' > docker-compose.yml
-version: "3.9"
-services:
-  mariadb:
-    image: mariadb:10.6
-    restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
-      MYSQL_DATABASE: erpnext
-      MYSQL_USER: erpnext
-      MYSQL_PASSWORD: ${DB_PASSWORD}
-    volumes:
-      - mariadb-data:/var/lib/mysql
+# (For this example, we assume the repository’s own scripts/templates handle this.)
+# You could add custom generation code here if needed.
 
-  redis-cache:
-    image: redis:latest
-    restart: always
-    volumes:
-      - redis-cache-data:/data
-
-  redis-queue:
-    image: redis:latest
-    restart: always
-    volumes:
-      - redis-queue-data:/data
-
-  backend:
-    image: frappe/erpnext:${ERPNEXT_VERSION}
-    restart: always
-    depends_on:
-      - mariadb
-      - redis-cache
-      - redis-queue
-    environment:
-      DB_HOST: ${DB_HOST}
-      DB_PORT: ${DB_PORT}
-      REDIS_CACHE: ${REDIS_CACHE}
-      REDIS_QUEUE: ${REDIS_QUEUE}
-      REDIS_SOCKETIO: ${REDIS_SOCKETIO}
-      SOCKETIO_PORT: ${SOCKETIO_PORT}
-    volumes:
-      - sites:/home/frappe/frappe-bench/sites
-
-  websocket:
-    image: frappe/erpnext:${ERPNEXT_VERSION}
-    restart: always
-    depends_on:
-      - backend
-      - redis-queue
-    command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
-    environment:
-      REDIS_QUEUE: ${REDIS_QUEUE}
-      REDIS_SOCKETIO: ${REDIS_SOCKETIO}
-    volumes:
-      - sites:/home/frappe/frappe-bench/sites
-
-  frontend:
-    image: frappe/erpnext:${ERPNEXT_VERSION}
-    restart: always
-    depends_on:
-      - backend
-      - websocket
-    command: ["nginx-entrypoint.sh"]
-    environment:
-      BACKEND: backend:8000
-      SOCKETIO: websocket:${SOCKETIO_PORT}
-      CLIENT_MAX_BODY_SIZE: 50m
-    volumes:
-      - sites:/home/frappe/frappe-bench/sites
-
-volumes:
-  mariadb-data:
-  redis-cache-data:
-  redis-queue-data:
-  sites:
-EOF
-
-###############################
-# 8. Launch ERPNext Containers
-###############################
+# --- Step 8: Launch ERPNext containers ---
 echo "==> Launching ERPNext containers..."
+cd "$REPO_DIR"
 docker-compose up -d --build
 
+# --- Step 9: Wait for containers to initialize ---
 echo "==> Waiting 60 seconds for containers to initialize..."
 sleep 60
 
-###############################
-# 9. Remove any existing configuration file in backend container
-###############################
-echo "==> Removing existing sites/common_site_config.json inside the backend container..."
-docker-compose exec backend bash -c "rm -f sites/common_site_config.json"
+# --- Step 10: Remove any existing site config inside the backend container ---
+echo "==> Removing existing sites/common_site_config.json inside backend container..."
+docker-compose exec backend rm -f sites/common_site_config.json || true
 
-###############################
-# 10. Debug: Output effective Redis configuration inside backend container
-###############################
+# (Optional: Print effective Redis configuration from the container for debugging)
 echo "==> Debug: Printing effective Redis configuration inside backend container..."
-docker-compose exec backend bash -c "echo 'REDIS_CACHE=' \$REDIS_CACHE; echo 'REDIS_QUEUE=' \$REDIS_QUEUE; echo 'REDIS_SOCKETIO=' \$REDIS_SOCKETIO"
+docker-compose exec backend bash -c 'echo "REDIS_CACHE: $(grep ^REDIS_CACHE sites/common_site_config.json 2>/dev/null)"; echo "REDIS_QUEUE: $(grep ^REDIS_QUEUE sites/common_site_config.json 2>/dev/null)"; echo "REDIS_SOCKETIO: $(grep ^REDIS_SOCKETIO sites/common_site_config.json 2>/dev/null)"' || true
 
-###############################
-# 11. Create new ERPNext site
-###############################
+# --- Step 11: Create the new ERPNext site ---
 echo "==> Creating new ERPNext site ${SITE_NAME}..."
-docker-compose exec backend bash -c "\
-  export REDIS_CACHE='${REDIS_CACHE}'; \
-  export REDIS_QUEUE='${REDIS_QUEUE}'; \
-  export REDIS_SOCKETIO='${REDIS_SOCKETIO}'; \
-  bench new-site '${SITE_NAME}' --mariadb-root-password '${DB_PASSWORD}' --admin-password '${ADMIN_PASSWORD}'"
+docker-compose exec backend bench new-site ${SITE_NAME} --mariadb-root-password "${MARIADB_ROOT_PASSWORD}" --admin-password "${ADMIN_PASSWORD}"
 
-###############################
-# 12. Restart containers
-###############################
-echo "==> Restarting containers..."
-docker-compose restart
-
-echo "==> ERPNext setup complete!"
-docker-compose ps
-echo "You can now access your ERPNext site at: http://<YOUR_SERVER_IP> (or update your DNS to point to ${SITE_NAME})."
-echo "For troubleshooting, check container logs (e.g., docker logs -f frappe_docker_websocket_1)."
-
-exit 0
+echo "==> Setup complete! Access your ERPNext site at http://<your_server_ip>"
