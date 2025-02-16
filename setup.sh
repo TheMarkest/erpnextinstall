@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # setup.sh – Clean ERPNext Docker installation on Ubuntu
-# WARNING: This script WILL remove existing ERPNext volumes and data.
-# Run this only on a new instance or after backing up your data.
+# WARNING: This script WILL remove any existing ERPNext volumes/data.
+# Use only on a new instance or after backing up your data.
 #
 # Usage:
 #   wget https://raw.githubusercontent.com/TheMarkest/erpnextinstall/refs/heads/main/setup.sh
@@ -10,12 +10,16 @@
 
 set -euo pipefail
 
-# ---------- 1. Update System & Install Prerequisites -----------
+###############################
+# 1. Update system & prerequisites
+###############################
 echo "==> Updating system and installing prerequisites..."
 sudo apt update -y && sudo apt upgrade -y
 sudo apt install -y curl git
 
-# ---------- 2. Install Docker and Docker Compose -----------
+###############################
+# 2. Install Docker and Docker Compose
+###############################
 echo "==> Installing Docker..."
 if ! command -v docker &>/dev/null; then
     sudo apt install -y docker.io
@@ -32,13 +36,17 @@ else
     echo "Docker Compose is already installed."
 fi
 
-# ---------- 3. Add current user to the docker group -----------
+###############################
+# 3. Add current user to the docker group (if not already)
+###############################
 if ! groups "$USER" | grep -qw docker; then
-    echo "==> Adding $USER to docker group. Please log out and log in again for changes to take effect."
+    echo "==> Adding $USER to the docker group. Please log out and log in again for changes to take effect."
     sudo usermod -aG docker "$USER"
 fi
 
-# ---------- 4. Clone (or update) the frappe_docker repository -----------
+###############################
+# 4. Clone (or update) the frappe_docker repository
+###############################
 echo "==> Cloning (or updating) the frappe_docker repository..."
 if [ ! -d "frappe_docker" ]; then
     git clone https://github.com/frappe/frappe_docker.git
@@ -48,11 +56,15 @@ else
 fi
 cd frappe_docker
 
-# ---------- 5. Remove any conflicting compose.yaml file -----------
+###############################
+# 5. Remove any conflicting compose.yaml file
+###############################
 echo "==> Removing any conflicting compose.yaml file..."
 rm -f compose.yaml
 
-# ---------- 6. Create a fresh .env file and source it ----------
+###############################
+# 6. Create a fresh .env file
+###############################
 echo "==> Creating .env file..."
 cat <<'EOF' > .env
 # Site and connection configuration
@@ -64,7 +76,7 @@ ADMIN_PASSWORD=SuperSecureAdminPassword
 ERPNEXT_VERSION=version-14
 FRAPPE_VERSION=version-14
 
-# Connection settings – ensure Redis URLs include the proper scheme!
+# Connection settings – these must include a valid scheme!
 REDIS_CACHE=redis://redis-cache:6379
 REDIS_QUEUE=redis://redis-queue:6379
 REDIS_SOCKETIO=redis://redis-queue:6379
@@ -74,12 +86,14 @@ DB_HOST=mariadb
 DB_PORT=3306
 EOF
 
-# Export variables from the .env file so that they are available to the script:
+# Export variables from .env so that they’re available to the script.
 set -a
 . .env
 set +a
 
-# ---------- 7. Create docker-compose.yml file ----------
+###############################
+# 7. Create docker-compose.yml file
+###############################
 echo "==> Creating docker-compose.yml..."
 cat <<'EOF' > docker-compose.yml
 version: "3.9"
@@ -158,25 +172,31 @@ volumes:
   sites:
 EOF
 
-# ---------- 8. Launch ERPNext Containers ----------
+###############################
+# 8. Launch ERPNext Containers
+###############################
 echo "==> Launching ERPNext containers..."
 docker-compose up -d --build
 
 echo "==> Waiting 60 seconds for containers to initialize..."
 sleep 60
 
-# ---------- 9. Remove any pre‐existing common_site_config.json file ----------
-# (An empty or conflicting common_site_config.json may override environment variables.)
-if [ -f sites/common_site_config.json ]; then
-    echo "==> Removing existing sites/common_site_config.json..."
-    rm -f sites/common_site_config.json
-fi
+###############################
+# 9. Remove any pre-existing common_site_config.json inside the backend container
+###############################
+echo "==> Removing existing sites/common_site_config.json inside the backend container..."
+docker-compose exec backend bash -c "rm -f sites/common_site_config.json"
 
-# ---------- 10. Create the ERPNext site ----------
+###############################
+# 10. Create the new ERPNext site
+###############################
 echo "==> Creating new ERPNext site ${SITE_NAME}..."
+# Here we ensure that the proper environment variables are exported inside the container:
 docker-compose exec backend bash -c "export REDIS_CACHE='${REDIS_CACHE}'; export REDIS_QUEUE='${REDIS_QUEUE}'; export REDIS_SOCKETIO='${REDIS_SOCKETIO}'; bench new-site '${SITE_NAME}' --mariadb-root-password '${DB_PASSWORD}' --admin-password '${ADMIN_PASSWORD}'"
 
-# ---------- 11. Restart containers ----------
+###############################
+# 11. Restart containers
+###############################
 echo "==> Restarting containers..."
 docker-compose restart
 
