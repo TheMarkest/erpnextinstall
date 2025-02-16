@@ -1,26 +1,8 @@
 #!/usr/bin/env bash
-# setup.sh – Clean ERPNext Docker installation on Ubuntu with additional debugging for Redis URL issues.
-# WARNING: This script WILL remove any existing ERPNext volumes/data.
-# Use only on a new instance or after backing up your data.
-#
-# Usage:
-#   wget https://raw.githubusercontent.com/TheMarkest/erpnextinstall/refs/heads/main/setup.sh
-#   chmod +x setup.sh
-#   ./setup.sh
-#
-# This script does the following:
-#  1. Updates the system and installs prerequisites.
-#  2. Installs Docker and Docker Compose if needed.
-#  3. Clones (or updates) the frappe_docker repository.
-#  4. Creates a fresh .env file containing site name, passwords, and valid Redis URLs.
-#  5. Creates a docker-compose.yml file that uses these settings.
-#  6. Launches ERPNext containers.
-#  7. Waits for containers to initialize.
-#  8. Removes any pre‑existing common_site_config.json in the backend container.
-#  9. (New Debug Step) Echoes the effective Redis configuration inside the backend container.
-# 10. Creates the new ERPNext site.
-# 11. Restarts containers and displays status.
-#
+# setup.sh – Clean ERPNext Docker installation with extra debug output for Redis configuration.
+# WARNING: This script will remove any existing ERPNext volumes/data.
+# Use on a fresh instance or after backing up your data.
+
 set -euo pipefail
 
 ###############################
@@ -80,16 +62,13 @@ rm -f compose.yaml
 ###############################
 echo "==> Creating .env file..."
 cat <<'EOF' > .env
-# Site and connection configuration
 SITE_NAME=crm.slimrate.com
 DB_PASSWORD=SuperSecureDBPassword
 ADMIN_PASSWORD=SuperSecureAdminPassword
 
-# Version tags (adjust if needed)
 ERPNEXT_VERSION=version-14
 FRAPPE_VERSION=version-14
 
-# Connection settings – include a valid scheme!
 REDIS_CACHE=redis://redis-cache:6379
 REDIS_QUEUE=redis://redis-queue:6379
 REDIS_SOCKETIO=redis://redis-queue:6379
@@ -99,7 +78,6 @@ DB_HOST=mariadb
 DB_PORT=3306
 EOF
 
-# Export variables so they’re available to the script:
 set -a; . .env; set +a
 
 ###############################
@@ -193,13 +171,13 @@ echo "==> Waiting 60 seconds for containers to initialize..."
 sleep 60
 
 ###############################
-# 9. Remove pre-existing common_site_config.json in backend container
+# 9. Remove any existing configuration file in backend container
 ###############################
 echo "==> Removing existing sites/common_site_config.json inside the backend container..."
 docker-compose exec backend bash -c "rm -f sites/common_site_config.json"
 
 ###############################
-# 10. Debug: Output the effective Redis configuration inside backend
+# 10. Debug: Output effective Redis configuration inside backend container
 ###############################
 echo "==> Debug: Printing effective Redis configuration inside backend container..."
 docker-compose exec backend bash -c "echo 'REDIS_CACHE=' \$REDIS_CACHE; echo 'REDIS_QUEUE=' \$REDIS_QUEUE; echo 'REDIS_SOCKETIO=' \$REDIS_SOCKETIO"
