@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# setup.sh – Clean ERPNext Docker setup on Ubuntu
-# WARNING: This script removes any existing ERPNext data and volumes.
-# It installs prerequisites, clones the frappe_docker repo, builds the containers,
-# and then creates (or updates) your ERPNext site “crm.slimrate.com” with proper Redis URLs.
+# setup.sh – Clean ERPNext Docker installation on Ubuntu
+# WARNING: This script WILL remove existing ERPNext volumes and data.
+# Run this only on a new instance or after backing up your data.
 #
 # Usage:
 #   wget https://raw.githubusercontent.com/TheMarkest/erpnextinstall/refs/heads/main/setup.sh
 #   chmod +x setup.sh
 #   ./setup.sh
-#
+
 set -euo pipefail
 
 # ---------- 1. Update System & Install Prerequisites -----------
@@ -33,9 +32,9 @@ else
     echo "Docker Compose is already installed."
 fi
 
-# ---------- 3. Add current user to the docker group (if needed) -----------
+# ---------- 3. Add current user to the docker group -----------
 if ! groups "$USER" | grep -qw docker; then
-    echo "==> Adding $USER to docker group. Log out and back in for changes to take effect."
+    echo "==> Adding $USER to docker group. Please log out and log in again for changes to take effect."
     sudo usermod -aG docker "$USER"
 fi
 
@@ -56,16 +55,16 @@ rm -f compose.yaml
 # ---------- 6. Create a fresh .env file and source it ----------
 echo "==> Creating .env file..."
 cat <<'EOF' > .env
-# Site configuration
+# Site and connection configuration
 SITE_NAME=crm.slimrate.com
 DB_PASSWORD=SuperSecureDBPassword
 ADMIN_PASSWORD=SuperSecureAdminPassword
 
-# Version tags
+# Version tags (adjust if needed)
 ERPNEXT_VERSION=version-14
 FRAPPE_VERSION=version-14
 
-# Redis & Database connection settings – note these use the proper redis:// scheme.
+# Connection settings – ensure Redis URLs include the proper scheme!
 REDIS_CACHE=redis://redis-cache:6379
 REDIS_QUEUE=redis://redis-queue:6379
 REDIS_SOCKETIO=redis://redis-queue:6379
@@ -75,12 +74,12 @@ DB_HOST=mariadb
 DB_PORT=3306
 EOF
 
-# Export variables from the .env file so they are available to the script:
+# Export variables from the .env file so that they are available to the script:
 set -a
 . .env
 set +a
 
-# ---------- 7. Create a docker-compose.yml file ----------
+# ---------- 7. Create docker-compose.yml file ----------
 echo "==> Creating docker-compose.yml..."
 cat <<'EOF' > docker-compose.yml
 version: "3.9"
@@ -166,19 +165,18 @@ docker-compose up -d --build
 echo "==> Waiting 60 seconds for containers to initialize..."
 sleep 60
 
-# ---------- 9. Create or update the ERPNext site ----------
-echo "==> Checking for site ${SITE_NAME}..."
-if docker-compose exec backend bench --site "${SITE_NAME}" version >/dev/null 2>&1; then
-    echo "Site ${SITE_NAME} exists. Updating Redis settings..."
-    docker-compose exec backend bash -c "bench --site '${SITE_NAME}' set-config redis_cache '${REDIS_CACHE}'"
-    docker-compose exec backend bash -c "bench --site '${SITE_NAME}' set-config redis_queue '${REDIS_QUEUE}'"
-    docker-compose exec backend bash -c "bench --site '${SITE_NAME}' set-config redis_socketio '${REDIS_SOCKETIO}'"
-else
-    echo "Site ${SITE_NAME} does not exist. Creating new site..."
-    docker-compose exec backend bash -c "export REDIS_CACHE='${REDIS_CACHE}'; export REDIS_QUEUE='${REDIS_QUEUE}'; export REDIS_SOCKETIO='${REDIS_SOCKETIO}'; bench new-site '${SITE_NAME}' --mariadb-root-password '${DB_PASSWORD}' --admin-password '${ADMIN_PASSWORD}'"
+# ---------- 9. Remove any pre‐existing common_site_config.json file ----------
+# (An empty or conflicting common_site_config.json may override environment variables.)
+if [ -f sites/common_site_config.json ]; then
+    echo "==> Removing existing sites/common_site_config.json..."
+    rm -f sites/common_site_config.json
 fi
 
-# ---------- 10. Restart containers to ensure configuration takes effect ----------
+# ---------- 10. Create the ERPNext site ----------
+echo "==> Creating new ERPNext site ${SITE_NAME}..."
+docker-compose exec backend bash -c "export REDIS_CACHE='${REDIS_CACHE}'; export REDIS_QUEUE='${REDIS_QUEUE}'; export REDIS_SOCKETIO='${REDIS_SOCKETIO}'; bench new-site '${SITE_NAME}' --mariadb-root-password '${DB_PASSWORD}' --admin-password '${ADMIN_PASSWORD}'"
+
+# ---------- 11. Restart containers ----------
 echo "==> Restarting containers..."
 docker-compose restart
 
@@ -186,4 +184,5 @@ echo "==> ERPNext setup complete!"
 docker-compose ps
 echo "You can now access your ERPNext site at: http://<YOUR_SERVER_IP> (or update your DNS to point ${SITE_NAME})."
 echo "For troubleshooting, check container logs (e.g., docker logs -f frappe_docker_websocket_1)."
+
 exit 0
